@@ -1,9 +1,10 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
 
-#include "Hook_DualValueModifier.h"
+#include "Hooks.h"
 #include "PCH.h"
 #include "ScalingConfig.h"
+#include "TextTemplates.h"
 #include "UI_RemoveDrains.h"
 
 #ifndef DLLEXPORT
@@ -62,8 +63,14 @@ namespace {
         switch (msg->type) {
             case SKSE::MessagingInterface::kDataLoaded: {
                 RDDM_UI::Register();
+                TextDes::ApplyDVME_TextTemplates();
+                spdlog::info("[RD] Text templates auto-applied at DataLoaded.");
                 break;
             }
+            case SKSE::MessagingInterface::kNewGame:
+            case SKSE::MessagingInterface::kPostLoadGame:
+                // RDDM_Hook::Install_DescHook();
+                break;
             default:
                 break;
         }
@@ -79,7 +86,8 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* sks
     spdlog::info("[RD] Config carregada: frostStamina={}, shockMagicka={}", RDDM::GetScaling().frostStamina.load(),
                  RDDM::GetScaling().shockMagicka.load());
 
-    RDDM_Hook::Install_DualValueModifier();
+    SKSE::AllocTrampoline(1 << 14);
+    RDDM_Hook::Install_Hooks();
     spdlog::info("[RD] Hooks instalados.");
 
     if (const auto mi = SKSE::GetMessagingInterface()) {

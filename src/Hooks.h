@@ -5,5 +5,6 @@
 #include "REL/Relocation.h"
 
 namespace RDDM_Hook {
-    void Install_DualValueModifier();
+    void Install_Hooks();
+    // void Install_DescHook();
 }

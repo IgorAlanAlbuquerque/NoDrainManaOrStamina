@@ -12,29 +12,26 @@
 
 #include "PCH.h"
 #include "RE/A/ActiveEffect.h"
-#include "RE/B/BSContainer.h"  // ForEachResult
+#include "RE/B/BSContainer.h"
 #include "RE/D/DualValueModifierEffect.h"
 #include "RE/M/MagicItem.h"
-#include "RE/M/MagicItemTraversalFunctor.h"  // base do functor
+#include "RE/M/MagicItemTraversalFunctor.h"
 #include "ScalingConfig.h"
 #include "common.h"
 
 using RDDM::GetScaling;
 
 namespace {
-    using MIDescOp_t = RE::BSContainer::ForEachResult (*)(void*, RE::Effect*);
+    /*using MIDescOp_t = RE::BSContainer::ForEachResult (*)(void*, RE::Effect*);
     static MIDescOp_t g_MI_Op_Orig_Main = nullptr;
     static MIDescOp_t g_MI_Op_Orig_Underscore = nullptr;
 
     static bool Prefer6ByteBranch(std::uintptr_t addr) {
         const auto* b = reinterpret_cast<const std::uint8_t*>(addr);
-        // prólogos comuns do MSVC que toleram 6B:
-        //   48 8B C4 …   (mov rax, rsp)
-        //   48 89 5C 24 … (push rbp via store)
-        //   40 53 …      (push rbx) às vezes cabe 5, mas 6 costuma ok dependendo da sequência
+
         if (b[0] == 0x48 && b[1] == 0x8B && b[2] == 0xC4) return true;
         if (b[0] == 0x48 && b[1] == 0x89 && b[2] == 0x5C && b[3] == 0x24) return true;
-        // fallback: tente 6 por padrão; se der crash, volte e use 5
+
         return true;
     }
 
@@ -59,36 +56,35 @@ namespace {
         for (int hop = 0; hop < maxHops; ++hop) {
             const auto* p = reinterpret_cast<const std::uint8_t*>(addr);
 
-            // 1) jmp rel32  (E9 disp32)
             if (p[0] == 0xE9) {
                 const auto disp = *reinterpret_cast<const std::int32_t*>(p + 1);
                 addr = addr + 5 + disp;
                 continue;
             }
-            // 2) jmp rel8   (EB disp8)
+
             if (p[0] == 0xEB) {
                 const auto disp = *reinterpret_cast<const std::int8_t*>(p + 1);
                 addr = addr + 2 + disp;
                 continue;
             }
-            // 3) jmp qword ptr [rip+disp32]  (FF 25 disp32)  — import/IAT thunk
+
             if (p[0] == 0xFF && p[1] == 0x25) {
                 const auto disp = *reinterpret_cast<const std::int32_t*>(p + 2);
-                const auto ptrLoc = addr + 6 + disp;  // RIP após a instr.
+                const auto ptrLoc = addr + 6 + disp;
                 const auto target = *reinterpret_cast<const std::uint64_t*>(ptrLoc);
                 addr = static_cast<std::uintptr_t>(target);
                 continue;
             }
-            // 4) mov rax, imm64 ; jmp rax  (48 B8 imm64 ; FF E0) — thunk island
+
             if (p[0] == 0x48 && p[1] == 0xB8) {
                 const auto imm = *reinterpret_cast<const std::uint64_t*>(p + 2);
                 const auto* p2 = p + 10;
-                if (p2[0] == 0xFF && p2[1] == 0xE0) {  // jmp rax
+                if (p2[0] == 0xFF && p2[1] == 0xE0) {
                     addr = static_cast<std::uintptr_t>(imm);
                     continue;
                 }
             }
-            // Chegou em algo que não é stub de jump: deve ser a prólogo real
+
             break;
         }
         return addr;
@@ -165,20 +161,18 @@ namespace {
         int off = cachedOff.load(std::memory_order_relaxed);
         if (off >= 0) return reinterpret_cast<RE::BSString*>((char*)self + off);
 
-        // scan de 0..0x100, passos de 8 bytes
         for (int o = 0; o <= 0x100; o += 8) {
             auto* cand = reinterpret_cast<RE::BSString*>((char*)self + o);
             const char* s = cand->c_str();
             if (!s || !*s) continue;
-            // heurística: a linha já resolvida costuma ter números e pode conter "<sec>"
-            // aceite ambas as situações (dependendo do efeito)
+
             if (std::strstr(s, "<sec>") || std::strstr(s, "deal") || std::strstr(s, "damage")) {
                 cachedOff.store(o, std::memory_order_relaxed);
                 return cand;
             }
         }
         return nullptr;
-    }
+    }*/
 
     template <class T>
     struct GetSecondaryWeightHook {
@@ -206,6 +200,29 @@ namespace {
             }
 
             return _orig(self);
+        }
+
+        static void Install() {
+            REL::Relocation<std::uintptr_t> vtbl{T::VTABLE[0]};
+            auto old = vtbl.write_vfunc(kIndex, &thunk);
+            _orig = reinterpret_cast<Fn*>(old);
+        }
+    };
+
+    template <class T>
+    struct VM_ModifyAV_Hook_Slow {
+        static constexpr std::size_t kIndex = 0x20;
+        using Fn = void(T*, RE::Actor*, float, RE::ActorValue);
+        static inline Fn* _orig{};
+
+        static void thunk(T* self, RE::Actor* actor, float value, RE::ActorValue av) {
+            if (auto* mgef = self ? const_cast<RE::EffectSetting*>(self->GetBaseObject()) : nullptr;
+                Common::IsFrostSlow(mgef)) {
+                if (const float f = RDDM::GetScaling().frostSlow.load(std::memory_order_relaxed); f != 1.0f) {
+                    value *= f;
+                }
+            }
+            _orig(self, actor, value, av);
         }
 
         static void Install() {
@@ -279,11 +296,12 @@ namespace {
         return r;
     }
 
-    // Thunk para a vtable "__GetMagicItemDescriptionFunctor"
+
     static RE::BSContainer::ForEachResult MI_Op_Thunk_Underscore(void* self, RE::Effect* eff) {
         spdlog::info("entrou no undersocre");
         const auto r =
-            g_MI_Op_Orig_Underscore ? g_MI_Op_Orig_Underscore(self, eff) : RE::BSContainer::ForEachResult::kContinue;
+            g_MI_Op_Orig_Underscore ? g_MI_Op_Orig_Underscore(self, eff) :
+    RE::BSContainer::ForEachResult::kContinue;
 
         auto* mgef = (eff && eff->baseEffect) ? eff->baseEffect : nullptr;
         if (!mgef) return r;
@@ -323,20 +341,21 @@ namespace {
 
 void RDDM_Hook::Install_Hooks() {
     GetSecondaryWeightHook<RE::DualValueModifierEffect>::Install();
-    // VM_ModifyAV_Hook<RE::ValueModifierEffect>::Install();
+    VM_ModifyAV_Hook_Slow<RE::PeakValueModifierEffect>::Install();
+    /*VM_ModifyAV_Hook<RE::ValueModifierEffect>::Install();*/
 }
 
 /*void RDDM_Hook::Install_DescHook() {
     {
         REL::Relocation<std::uintptr_t> vtbl{RE::VTABLE_GetMagicItemDescriptionFunctor[0]};
-        constexpr int kOpIdx = 4;  // se não disparar, tente 3
+        constexpr int kOpIdx = 4;
         const auto old = vtbl.write_vfunc(kOpIdx, reinterpret_cast<std::uintptr_t>(&MI_Op_Thunk));
         g_MI_Op_Orig_Main = reinterpret_cast<MIDescOp_t>(old);
     }
-    // "__" (duplo sublinhado)
+
     {
         REL::Relocation<std::uintptr_t> vtbl{RE::VTABLE___GetMagicItemDescriptionFunctor[0]};
-        constexpr int kOpIdx = 4;  // se não disparar, tente 3
+        constexpr int kOpIdx = 4;
         const auto old = vtbl.write_vfunc(kOpIdx, reinterpret_cast<std::uintptr_t>(&MI_Op_Thunk_Underscore));
         g_MI_Op_Orig_Underscore = reinterpret_cast<MIDescOp_t>(old);
     }

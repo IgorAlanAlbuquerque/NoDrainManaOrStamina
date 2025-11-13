@@ -5,7 +5,7 @@
 using RDDM::GetScaling;
 
 void __stdcall RDDM_UI::DrawScales() {
-    ImGui::TextUnformatted("RVDME — Scaling");
+    ImGui::TextUnformatted("RVDME: Scaling");
     ImGui::Separator();
 
     auto& cfg = GetScaling();

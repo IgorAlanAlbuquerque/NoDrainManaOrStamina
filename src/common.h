@@ -2,29 +2,40 @@
 #include "PCH.h"
 
 namespace Common {
-    inline bool IsDestruction(const RE::EffectSetting* mgef) noexcept {
-        return mgef && mgef->data.associatedSkill == RE::ActorValue::kDestruction;
+    inline bool IsElementFrost(const RE::EffectSetting* m) noexcept {
+        if (!m) return false;
+        if (m->data.resistVariable == RE::ActorValue::kResistFrost) return true;
+        return const_cast<RE::EffectSetting*>(m)->HasKeyword("MagicDamageFrost");
     }
+
+    inline bool IsElementShock(const RE::EffectSetting* m) noexcept {
+        if (!m) return false;
+        if (m->data.resistVariable == RE::ActorValue::kResistShock) return true;
+        return const_cast<RE::EffectSetting*>(m)->HasKeyword("MagicDamageShock");
+    }
+
+    inline bool IsElementFire(const RE::EffectSetting* m) noexcept {
+        if (!m) return false;
+        if (m->data.resistVariable == RE::ActorValue::kResistFire) return true;
+        return const_cast<RE::EffectSetting*>(m)->HasKeyword("MagicDamageFire");
+    }
+
     inline bool IsDV_Health_Stamina(const RE::EffectSetting* m) noexcept {
-        return m && m->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kDualValueModifier &&
-               m->data.primaryAV == RE::ActorValue::kHealth && m->data.secondaryAV == RE::ActorValue::kStamina &&
-               IsDestruction(m);
+        if (!m) return false;
+        const bool elem = IsElementFrost(m);
+        const bool vanilla = m->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kDualValueModifier &&
+                             m->data.primaryAV == RE::ActorValue::kHealth &&
+                             m->data.secondaryAV == RE::ActorValue::kStamina;
+        const bool cloak = m->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kCloak;
+        return elem && (vanilla || cloak);
     }
     inline bool IsDV_Health_Magicka(const RE::EffectSetting* m) noexcept {
-        return m && m->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kDualValueModifier &&
-               m->data.primaryAV == RE::ActorValue::kHealth && m->data.secondaryAV == RE::ActorValue::kMagicka &&
-               IsDestruction(m);
-    }
-
-    inline bool IsFireMGEF(const RE::EffectSetting* m) noexcept {
-        return m && m->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kValueModifier &&
-               m->data.primaryAV == RE::ActorValue::kHealth && IsDestruction(m);
-    }
-
-    inline bool IsFireBurningMGEF(const RE::EffectSetting* m) {
-        using AV = RE::ActorValue;
-        return m && m->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kValueModifier &&
-               m->data.primaryAV == AV::kHealth && IsDestruction(m);
+        const bool elem = IsElementShock(m);
+        const bool vanilla = m && m->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kDualValueModifier &&
+                             m->data.primaryAV == RE::ActorValue::kHealth &&
+                             m->data.secondaryAV == RE::ActorValue::kMagicka;
+        const bool cloak = m->GetArchetype() == RE::EffectArchetypes::ArchetypeID::kCloak;
+        return elem && (vanilla || cloak);
     }
 
     inline bool HasMagicSlowKW(const RE::EffectSetting* m) noexcept {
@@ -51,4 +62,6 @@ namespace Common {
 
         return isDest || hasKW;
     }
+
+    inline bool isCCSpells(const RE::EffectSetting* m) noexcept {}
 }

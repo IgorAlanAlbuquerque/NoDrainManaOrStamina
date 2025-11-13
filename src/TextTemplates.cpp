@@ -11,10 +11,41 @@ using AV = RE::ActorValue;
 using Arch = RE::EffectArchetypes::ArchetypeID;
 
 namespace {
+    struct FireTaperOrig {
+        float weight;
+        bool initialized;
+    };
+
+    static std::unordered_map<RE::FormID, FireTaperOrig> g_fireTaperOrig;
+
     constexpr RE::FormID kWallFrost = 0x0008F3F7;
     constexpr RE::FormID kWallShock = 0x000BB96F;
     constexpr RE::FormID kCloakFrost = 0x0003AEA0;
     constexpr RE::FormID kCloakShock = 0x0003AEA1;
+
+    static void ApplyFireTaper(RE::EffectSetting* m, float fireMult) {
+        if (!m) return;
+
+        auto fid = m->GetFormID();
+        auto& entry = g_fireTaperOrig[fid];
+
+        if (!entry.initialized) {
+            entry.weight = m->data.taperWeight;
+            entry.initialized = true;
+        }
+
+        if (fireMult <= 1e-6f) {
+            m->data.taperWeight = 0.0f;
+            return;
+        }
+
+        if (std::fabs(fireMult - 1.0f) < 1e-3f) {
+            m->data.taperWeight = entry.weight;
+            return;
+        }
+
+        m->data.taperWeight = entry.weight * fireMult;
+    }
 
     inline bool WantsPerSecond(const RE::EffectSetting* m) {
         if (!m) return false;
@@ -214,6 +245,36 @@ namespace {
             if (!SameDesc(m, cur)) SetDesc(m, cur);
         }
     }
+
+    inline bool IsCC_ElementalExplosion(RE::FormID id) noexcept {
+        switch (id) {
+            case 0xFE009846:
+            case 0xFE009845:
+            case 0xFE009844:
+            case 0xFE009840:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    inline std::string BuildCC_ElementalExplosionDesc(float staminaMult, bool useHalfText) {
+        std::string s = "An elemental explosion for <mag> points of magic damage";
+
+        if (staminaMult <= 1e-6f) {
+            s += ". Deals shock damage on impact. Benefits from perks affecting fire, shock and frost spell damage.";
+            return s;
+        }
+
+        if (useHalfText) {
+            s += " and half as much damage to stamina. ";
+        } else {
+            s += " and <sec> damage to stamina. ";
+        }
+
+        s += "Deals shock damage on impact. Benefits from perks affecting fire, shock and frost spell damage.";
+        return s;
+    }
 }
 
 void TextDes::ApplyDVME_TextTemplates() {
@@ -223,36 +284,46 @@ void TextDes::ApplyDVME_TextTemplates() {
     const float frostF = RDDM::GetScaling().frostStamina.load(std::memory_order_relaxed);
     const float shockF = RDDM::GetScaling().shockMagicka.load(std::memory_order_relaxed);
 
-    std::uint32_t edited = 0;
-
     for (auto* m : dh->GetFormArray<RE::EffectSetting>()) {
         if (!m) continue;
 
-        if (Common::IsDV_Health_Stamina(m)) {
+        if (IsCC_ElementalExplosion(m->GetFormID())) {
+            const float cfg = RDDM::GetScaling().frostStamina.load(std::memory_order_relaxed);
+            const float fireF = RDDM::GetScaling().fireBurning.load(std::memory_order_relaxed);
+
+            const bool keepHalf = std::fabs(cfg - 1.0f) < 1e-3f;
+
+            const std::string txt = BuildCC_ElementalExplosionDesc(cfg, keepHalf);
+
+            if (!SameDesc(m, txt)) {
+                SetDesc(m, txt);
+            }
+            ApplyFireTaper(m, fireF);
+            continue;
+        }
+        if (Common::IsElementFrost(m)) {
             const float mult = m->data.secondAVWeight * frostF;
 
             const std::string txt = BuildDVME_Desc(m, mult, true);
             if (!SameDesc(m, txt)) {
                 SetDesc(m, txt);
-                ++edited;
             }
             continue;
         }
-
-        if (Common::IsDV_Health_Magicka(m)) {
+        if (Common::IsElementShock(m)) {
             const float mult = m->data.secondAVWeight * shockF;
 
             const std::string txt = BuildDVME_Desc(m, mult, false);
             if (!SameDesc(m, txt)) {
                 SetDesc(m, txt);
-                ++edited;
             }
             continue;
         }
 
-        if (Common::IsFireMGEF(m)) {
+        if (Common::IsElementFire(m)) {
             const float fireF = RDDM::GetScaling().fireBurning.load(std::memory_order_relaxed);
             ApplyFireDescOne(m, fireF);
+            ApplyFireTaper(m, fireF);
             continue;
         }
     }

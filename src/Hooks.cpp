@@ -16,17 +16,17 @@
 #include "RE/D/DualValueModifierEffect.h"
 #include "RE/M/MagicItem.h"
 #include "RE/M/MagicItemTraversalFunctor.h"
+#include "RE/M/MagicMenu.h"
 #include "ScalingConfig.h"
 #include "common.h"
 
 using RDDM::GetScaling;
 
 namespace {
-    /*using MIDescOp_t = RE::BSContainer::ForEachResult (*)(void*, RE::Effect*);
-    static MIDescOp_t g_MI_Op_Orig_Main = nullptr;
-    static MIDescOp_t g_MI_Op_Orig_Underscore = nullptr;
+    using GetDesc_fn = void (*)(RE::TESDescription*, RE::BSString&, RE::TESForm*, std::uint32_t);
+    static GetDesc_fn g_callsite_orig = nullptr;
 
-    static bool Prefer6ByteBranch(std::uintptr_t addr) {
+    /*static bool Prefer6ByteBranch(std::uintptr_t addr) {
         const auto* b = reinterpret_cast<const std::uint8_t*>(addr);
 
         if (b[0] == 0x48 && b[1] == 0x8B && b[2] == 0xC4) return true;
@@ -90,8 +90,26 @@ namespace {
         return addr;
     }
 
-    static bool find_deals_and_number(const std::string& s, size_t beforePos, size_t& numStart, size_t& numLen,
-                                      double& value) {
+    static RE::BSString* GetLineMember(void* self) {
+        static std::atomic<int> cachedOff{-1};
+        int off = cachedOff.load(std::memory_order_relaxed);
+        if (off >= 0) return reinterpret_cast<RE::BSString*>((char*)self + off);
+
+        for (int o = 0; o <= 0x100; o += 8) {
+            auto* cand = reinterpret_cast<RE::BSString*>((char*)self + o);
+            const char* s = cand->c_str();
+            if (!s || !*s) continue;
+
+            if (std::strstr(s, "<sec>") || std::strstr(s, "deal") || std::strstr(s, "damage")) {
+                cachedOff.store(o, std::memory_order_relaxed);
+                return cand;
+            }
+        }
+        return nullptr;
+    }*/
+
+    bool find_deals_and_number(const std::string& s, size_t beforePos, size_t& numStart, size_t& numLen,
+                               double& value) {
         if (beforePos == 0) return false;
 
         auto ci_eq = [](char a, char b) { return std::tolower((unsigned char)a) == std::tolower((unsigned char)b); };
@@ -139,11 +157,11 @@ namespace {
         return false;
     }
 
-    static std::optional<double> ComputeSecFactor(const RE::SpellItem* sp) {
+    std::optional<double> ComputeSecFactor(const RE::SpellItem* sp) {
         if (!sp) return std::nullopt;
-        for (auto* eff : sp->effects) {
+        for (auto const* eff : sp->effects) {
             if (!eff || !eff->baseEffect) continue;
-            auto* m = eff->baseEffect;
+            auto const* m = eff->baseEffect;
             if (Common::IsDV_Health_Stamina(m)) {
                 const double slider = RDDM::GetScaling().frostStamina.load(std::memory_order_relaxed);
                 return double(m->data.secondAVWeight) * slider;
@@ -156,23 +174,70 @@ namespace {
         return std::nullopt;
     }
 
-    static RE::BSString* GetLineMember(void* self) {
-        static std::atomic<int> cachedOff{-1};
-        int off = cachedOff.load(std::memory_order_relaxed);
-        if (off >= 0) return reinterpret_cast<RE::BSString*>((char*)self + off);
+    void GetDesc_CallThunk(RE::TESDescription* self, RE::BSString& out, RE::TESForm* parent, std::uint32_t fieldType) {
+        static thread_local bool reent = false;
+        if (reent) {
+            g_callsite_orig(self, out, parent, fieldType);
+            return;
+        }
 
-        for (int o = 0; o <= 0x100; o += 8) {
-            auto* cand = reinterpret_cast<RE::BSString*>((char*)self + o);
-            const char* s = cand->c_str();
-            if (!s || !*s) continue;
+        reent = true;
+        g_callsite_orig(self, out, parent, fieldType);
 
-            if (std::strstr(s, "<sec>") || std::strstr(s, "deal") || std::strstr(s, "damage")) {
-                cachedOff.store(o, std::memory_order_relaxed);
-                return cand;
+        auto* sp = parent ? parent->As<RE::SpellItem>() : nullptr;
+        const char* cur = out.c_str();
+        if (!sp || !cur) {
+            reent = false;
+            return;
+        }
+
+        std::string s = cur;
+        if (s.find("<sec>") == std::string::npos) {
+            reent = false;
+            return;
+        }
+
+        auto secF = ComputeSecFactor(sp);
+
+        size_t pos = 0;
+        while ((pos = s.find("<sec>", pos)) != std::string::npos) {
+            if (!secF.has_value()) {
+                s.erase(pos, 5);
+                continue;
+            }
+
+            size_t nStart = 0, nLen = 0;
+            double magVal = 0.0;
+            if (find_deals_and_number(s, pos, nStart, nLen, magVal)) {
+                const long iv = (long)std::lround(magVal * (*secF));
+                const std::string repl = std::to_string(iv);
+                s.replace(pos, 5, repl);
+                pos += repl.size();
+            } else {
+                s.erase(pos, 5);
             }
         }
-        return nullptr;
-    }*/
+
+        out = s.c_str();
+        reent = false;
+    }
+
+    std::uintptr_t Find_GetDesc_CallInside(std::uintptr_t funcStart, std::size_t maxScanBytes) {
+        const std::uint8_t pat[] = {0x41, 0xB9, 0x43, 0x45, 0x53, 0x44};
+        auto* p = reinterpret_cast<const std::uint8_t*>(funcStart);
+        auto* end = p + maxScanBytes;
+
+        for (auto* cur = p; cur + sizeof(pat) + 5 <= end; ++cur) {
+            if (std::memcmp(cur, pat, sizeof(pat)) == 0) {
+                for (int off = 6; off <= 48 && cur + off + 5 <= end; ++off) {
+                    if (cur[off] == 0xE8) {
+                        return reinterpret_cast<std::uintptr_t>(cur + off);
+                    }
+                }
+            }
+        }
+        return 0;
+    }
 
     template <class T>
     struct GetSecondaryWeightHook {
@@ -231,132 +296,27 @@ namespace {
             _orig = reinterpret_cast<Fn*>(old);
         }
     };
-
-    /*template <class T>
-    struct VM_ModifyAV_Hook {
-        static constexpr std::size_t kIndex = 0x20;
-        using Fn = void(T*, RE::Actor*, float, RE::ActorValue);
-        static inline Fn* _orig{};
-
-        static void thunk(T* self, RE::Actor* actor, float value, RE::ActorValue av) {
-            auto* mgef = self ? const_cast<RE::EffectSetting*>(self->GetBaseObject()) : nullptr;
-
-            if (mgef && Common::IsFireBurningMGEF(mgef) && self->duration > 0.0f && av == RE::ActorValue::kHealth) {
-                const float f = RDDM::GetScaling().fireBurning.load(std::memory_order_relaxed);
-                if (f != 1.0f) {
-                    value *= f;
-                }
-            }
-            _orig(self, actor, value, av);
-        }
-
-        static void Install() {
-            REL::Relocation<std::uintptr_t> vtbl{T::VTABLE[0]};
-            auto old = vtbl.write_vfunc(kIndex, &thunk);
-            _orig = reinterpret_cast<Fn*>(old);
-        }
-    };*/
-
-    /*static RE::BSContainer::ForEachResult MI_Op_Thunk(void* self, RE::Effect* eff) {
-        spdlog::info("entrou");
-        const auto r = g_MI_Op_Orig_Main ? g_MI_Op_Orig_Main(self, eff) : RE::BSContainer::ForEachResult::kContinue;
-
-        auto* mgef = (eff && eff->baseEffect) ? eff->baseEffect : nullptr;
-        if (!mgef) return r;
-
-        double mult = 1.0;
-        if (Common::IsDV_Health_Stamina(mgef))
-            mult = RDDM::GetScaling().frostStamina.load();
-        else if (Common::IsDV_Health_Magicka(mgef))
-            mult = RDDM::GetScaling().shockMagicka.load();
-
-        const double secW = mgef->data.secondAVWeight;
-        if (secW == 0.0 && mult == 1.0) return r;
-
-        auto* line = GetLineMember(self);
-        if (!line) return r;
-        const char* cur = line->c_str();
-        if (!cur || !*cur) return r;
-
-        std::string s = cur;
-        size_t pos = s.find("<sec>");
-        if (pos == std::string::npos) return r;
-
-        size_t nStart = 0, nLen = 0;
-        double mag = 0.0;
-        if (find_deals_and_number(s, pos, nStart, nLen, mag)) {
-            const auto repl = fmt::format("{:.1f}", mag * secW * mult);
-            s.replace(pos, 5, repl);
-        } else {
-            const auto repl = fmt::format("{:.1f}", secW * mult);
-            s.replace(pos, 5, repl);
-        }
-
-        *line = s.c_str();
-        return r;
-    }
-
-
-    static RE::BSContainer::ForEachResult MI_Op_Thunk_Underscore(void* self, RE::Effect* eff) {
-        spdlog::info("entrou no undersocre");
-        const auto r =
-            g_MI_Op_Orig_Underscore ? g_MI_Op_Orig_Underscore(self, eff) :
-    RE::BSContainer::ForEachResult::kContinue;
-
-        auto* mgef = (eff && eff->baseEffect) ? eff->baseEffect : nullptr;
-        if (!mgef) return r;
-
-        double mult = 1.0;
-        if (Common::IsDV_Health_Stamina(mgef))
-            mult = RDDM::GetScaling().frostStamina.load();
-        else if (Common::IsDV_Health_Magicka(mgef))
-            mult = RDDM::GetScaling().shockMagicka.load();
-
-        const double secW = mgef->data.secondAVWeight;
-        if (secW == 0.0 && mult == 1.0) return r;
-
-        auto* line = GetLineMember(self);
-        if (!line) return r;
-        const char* cur = line->c_str();
-        if (!cur || !*cur) return r;
-
-        std::string s = cur;
-        size_t pos = s.find("<sec>");
-        if (pos == std::string::npos) return r;
-
-        size_t nStart = 0, nLen = 0;
-        double mag = 0.0;
-        if (find_deals_and_number(s, pos, nStart, nLen, mag)) {
-            const auto repl = fmt::format("{:.1f}", mag * secW * mult);
-            s.replace(pos, 5, repl);
-        } else {
-            const auto repl = fmt::format("{:.1f}", secW * mult);
-            s.replace(pos, 5, repl);
-        }
-
-        *line = s.c_str();
-        return r;
-    }*/
 }
 
 void RDDM_Hook::Install_Hooks() {
     GetSecondaryWeightHook<RE::DualValueModifierEffect>::Install();
     VM_ModifyAV_Hook_Slow<RE::PeakValueModifierEffect>::Install();
-    /*VM_ModifyAV_Hook<RE::ValueModifierEffect>::Install();*/
+
+    REL::Relocation<std::uintptr_t> vtblMagic{RE::VTABLE_MagicMenu[0]};
+    auto const* processMsg = reinterpret_cast<std::uintptr_t*>(vtblMagic.address());
+    auto procAddr = processMsg[0x04];
+
+    constexpr std::size_t kScan = 0xC00;
+    const auto callSite = Find_GetDesc_CallInside(procAddr, kScan);
+    if (!callSite) {
+        spdlog::warn("[RD] Nao encontrei o CALL de TESDescription::GetDescription dentro de MagicMenu::ProcessMessage");
+        return;
+    }
+
+    auto& tramp = SKSE::GetTrampoline();
+    const auto orig = tramp.write_call<5>(callSite, reinterpret_cast<std::uintptr_t>(&GetDesc_CallThunk));
+    g_callsite_orig = reinterpret_cast<GetDesc_fn>(orig);
+
+    spdlog::info("[RD] Hook no call-site de GetDescription em MagicMenu::ProcessMessage ok. call=0x{:X}, orig=0x{:X}",
+                 (unsigned)callSite, (unsigned)orig);
 }
-
-/*void RDDM_Hook::Install_DescHook() {
-    {
-        REL::Relocation<std::uintptr_t> vtbl{RE::VTABLE_GetMagicItemDescriptionFunctor[0]};
-        constexpr int kOpIdx = 4;
-        const auto old = vtbl.write_vfunc(kOpIdx, reinterpret_cast<std::uintptr_t>(&MI_Op_Thunk));
-        g_MI_Op_Orig_Main = reinterpret_cast<MIDescOp_t>(old);
-    }
-
-    {
-        REL::Relocation<std::uintptr_t> vtbl{RE::VTABLE___GetMagicItemDescriptionFunctor[0]};
-        constexpr int kOpIdx = 4;
-        const auto old = vtbl.write_vfunc(kOpIdx, reinterpret_cast<std::uintptr_t>(&MI_Op_Thunk_Underscore));
-        g_MI_Op_Orig_Underscore = reinterpret_cast<MIDescOp_t>(old);
-    }
-}*/

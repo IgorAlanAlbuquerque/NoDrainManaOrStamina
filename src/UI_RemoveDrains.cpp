@@ -1,5 +1,7 @@
 #include "UI_RemoveDrains.h"
 
+#include "SKSEMenuFramework.h"
+#include "ScalingConfig.h"
 #include "TextTemplates.h"
 
 using RDDM::GetScaling;
@@ -38,7 +40,7 @@ void __stdcall RDDM_UI::DrawScales() {
 
     ImGui::Spacing();
     ImGui::BeginDisabled(!pending);
-    bool pressed = ImGui::Button("Apply changes", ImVec2(140.0f, 0.0f));
+    bool pressed = ImGui::Button("Apply changes", ImVec2{140.0f, 0.0f});
     ImGui::EndDisabled();
     if (pressed) {
         cfg.Save();

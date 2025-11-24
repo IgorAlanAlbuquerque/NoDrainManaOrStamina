@@ -41,9 +41,8 @@ namespace Common {
     inline bool HasMagicSlowKW(const RE::EffectSetting* m) noexcept {
         if (!m) return false;
 
-        if (static RE::BGSKeyword const* kMagicSlowPtr = []() -> RE::BGSKeyword* {
-                return RE::TESForm::LookupByID<RE::BGSKeyword>(0x000B729E);
-            }();
+        if (static RE::BGSKeyword const* kMagicSlowPtr =
+                []() { return RE::TESForm::LookupByID<RE::BGSKeyword>(0x000B729E); }();
             kMagicSlowPtr && m->HasKeyword(kMagicSlowPtr))
             return true;
         return const_cast<RE::EffectSetting*>(m)->HasKeyword("MagicSlow");
@@ -54,14 +53,12 @@ namespace Common {
         if (!m) return false;
 
         const bool isPeak = (m->GetArchetype() == Arch::kPeakValueModifier);
-        const bool isSpeed = (m->data.primaryAV == RE::ActorValue::kSpeedMult);
-        if (!isPeak || !isSpeed) return false;
+
+        if (const bool isSpeed = (m->data.primaryAV == RE::ActorValue::kSpeedMult); !isPeak || !isSpeed) return false;
 
         const bool isDest = (m->data.associatedSkill == RE::ActorValue::kDestruction);
         const bool hasKW = HasMagicSlowKW(m);
 
         return isDest || hasKW;
     }
-
-    inline bool isCCSpells(const RE::EffectSetting* m) noexcept {}
 }

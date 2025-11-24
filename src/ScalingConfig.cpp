@@ -1,9 +1,10 @@
 #include "ScalingConfig.h"
 
-#include <SKSE/SKSE.h>
 #include <SimpleIni.h>
 
 #include <string>
+
+#include "PCH.h"
 using namespace std::string_literals;
 
 namespace {
@@ -20,7 +21,7 @@ namespace RDDM {
     const std::filesystem::path& _GetThisDllDir();
 
     std::filesystem::path ScalingConfig::IniPath() {
-        const auto base = RDDM::_GetThisDllDir();
+        const auto& base = RDDM::_GetThisDllDir();
         return base / "RemoveDrains.ini";
     }
 
@@ -54,7 +55,7 @@ namespace RDDM {
     }
 
     ScalingConfig& GetScaling() {
-        static ScalingConfig g{};
+        static ScalingConfig g{};  // NOSONAR: Global config state
         return g;
     }
 }

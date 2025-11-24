@@ -1,5 +1,4 @@
-#include <spdlog/sinks/basic_file_sink.h>
-#include <spdlog/spdlog.h>
+#include <windows.h>
 
 #include "Hooks.h"
 #include "PCH.h"
@@ -16,12 +15,12 @@
 
 namespace RDDM {
     const std::filesystem::path& _GetThisDllDir() {
-        static std::filesystem::path cached = []() {
+        static std::filesystem::path cached = []() {  // NOSONAR: Lazy init
             HMODULE hMod = nullptr;
 
             if (!::GetModuleHandleExW(
                     GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                    reinterpret_cast<LPCWSTR>(&_GetThisDllDir), &hMod)) {
+                    reinterpret_cast<LPCWSTR>(&_GetThisDllDir), &hMod)) {  // NOSONAR: Padrão documentado é esse mesmo
                 return std::filesystem::current_path();
             }
 
@@ -60,19 +59,10 @@ namespace {
 
     void OnMessage(SKSE::MessagingInterface::Message* msg) {
         if (!msg) return;
-        switch (msg->type) {
-            case SKSE::MessagingInterface::kDataLoaded: {
-                RDDM_UI::Register();
-                TextDes::ApplyDVME_TextTemplates();
-                spdlog::info("[RD] Text templates auto-applied at DataLoaded.");
-                break;
-            }
-            case SKSE::MessagingInterface::kNewGame:
-            case SKSE::MessagingInterface::kPostLoadGame:
-                // RDDM_Hook::Install_DescHook();
-                break;
-            default:
-                break;
+        if (msg->type == SKSE::MessagingInterface::kDataLoaded) {
+            RDDM_UI::Register();
+            TextDes::ApplyDVME_TextTemplates();
+            spdlog::info("[RD] Text templates auto-applied at DataLoaded.");
         }
     }
 }

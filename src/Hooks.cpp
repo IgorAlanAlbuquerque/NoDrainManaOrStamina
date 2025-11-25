@@ -21,6 +21,11 @@ namespace RDDM {
     static std::mutex g_magMutex;                          // NOSONAR: Mutex for g_lastFormattedMag
     static std::unordered_map<RE::EffectSetting*, double>  // NOSONAR: Cache of last formatted magnitudes
         g_lastFormattedMag;
+    constexpr RE::FormID kUnboundedStormsMgef = 0xFE009807;
+    constexpr RE::FormID kUnboundedFreezingMgef = 0xFE009809;
+    constexpr RE::FormID kCloakFrostMgef = 0x0003AEA0;
+    constexpr RE::FormID kCloakShockMgef = 0x0003AEA1;
+    constexpr RE::FormID kBlizzardMgef = 0x000B79FE;
 
     std::string OnEffectFormatted(RE::Effect* effect, std::string full, const std::string& inside, const std::string&,
                                   const std::string&) {
@@ -44,7 +49,6 @@ namespace RDDM {
         if (isNumber) {
             std::scoped_lock lock(g_magMutex);
             g_lastFormattedMag[mgef] = magVal;
-
             return full;
         }
 
@@ -57,22 +61,46 @@ namespace RDDM {
             std::scoped_lock lock(g_magMutex);
             auto it = g_lastFormattedMag.find(mgef);
             if (it == g_lastFormattedMag.end()) {
-                spdlog::info("[MagFmt] inside='sec' mas sem mag cacheado para {:08X}", mgef->formID);
                 return full;
             }
             cachedMag = it->second;
         }
 
+        const auto formID = mgef->GetFormID();
+
+        bool isHealthStamina = Common::IsDV_Health_Stamina(mgef);
+        bool isHealthMagicka = Common::IsDV_Health_Magicka(mgef);
+
+        if (formID == kUnboundedStormsMgef || formID == kCloakShockMgef) {
+            isHealthMagicka = true;
+        }
+
+        if (formID == kUnboundedFreezingMgef || formID == kCloakFrostMgef || formID == kBlizzardMgef) {
+            isHealthStamina = true;
+        }
+
         double slider = 1.0;
-        if (Common::IsDV_Health_Stamina(mgef)) {
+        if (isHealthStamina) {
             slider = GetScaling().frostStamina.load(std::memory_order_relaxed);
-        } else if (Common::IsDV_Health_Magicka(mgef)) {
+        } else if (isHealthMagicka) {
             slider = GetScaling().shockMagicka.load(std::memory_order_relaxed);
         } else {
             return full;
         }
 
-        double secD = cachedMag * static_cast<double>(mgef->data.secondAVWeight) * slider;
+        auto secondWeight = static_cast<double>(mgef->data.secondAVWeight);
+
+        if (formID == kUnboundedStormsMgef && secondWeight <= 0.0) {
+            secondWeight = 0.5;
+        }
+
+        if ((formID == kUnboundedFreezingMgef || formID == kCloakFrostMgef || formID == kCloakShockMgef ||
+             formID == kBlizzardMgef) &&
+            secondWeight <= 0.0) {
+            secondWeight = 1.0;
+        }
+
+        double secD = cachedMag * secondWeight * slider;
         long long sec = std::llround(secD);
         if (sec < 0) {
             sec = 0;

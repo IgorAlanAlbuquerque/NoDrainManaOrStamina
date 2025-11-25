@@ -28,7 +28,7 @@ private:
         std::size_t pSize;
         std::size_t sSize;
 
-        StringData(EffectStruct* arg) {
+        explicit StringData(EffectStruct* arg) {
             auto prefixPtr = arg->prefix;
             auto suffixPtr = arg->suffix;
 
@@ -46,7 +46,6 @@ private:
                 formID = base->formID;
             }
         }
-        spdlog::info("MagFormatHook: baseEffect = {:08X}", formID);
     }
 
     static_assert(offsetof(EffectStruct, buffer) == 0x00);
@@ -58,11 +57,9 @@ private:
         inline static std::uintptr_t func = 0;
 
         static const char* thunk(EffectStruct* arg, char* type, char* unused, char* edid) {
-            spdlog::info("MagFormatHook.CallEffectA::thunk chamado");
             using Fn = const char* (*)(EffectStruct*, char*, char*, char*);
 
             if (!arg) {
-                spdlog::warn("MagFormatHook.CallEffectA: arg == nullptr (CTD vindo)");
                 auto orig = reinterpret_cast<Fn>(func);
                 return orig ? orig(arg, type, unused, edid) : nullptr;
             }
@@ -80,9 +77,8 @@ private:
             std::string full = result;
             std::string inside = full.substr(ps.pSize, fSize - ps.pSize - ps.sSize);
 
-            std::string newFull = RDDM::OnEffectFormatted(arg->effect.common, std::move(full), inside, ps.p, ps.s);
-
-            if (newFull != result) {
+            if (std::string newFull = RDDM::OnEffectFormatted(arg->effect.common, std::move(full), inside, ps.p, ps.s);
+                newFull != result) {
                 arg->buffer = newFull.c_str();
                 result = arg->buffer.c_str();
             }
@@ -93,8 +89,6 @@ private:
         static void Install() {
             Hook::stl::write_call<CallEffectA>(REL::VariantID(10937, 11027, 0x108FF0),
                                                REL::VariantOffset(0x1AD, 0x2B2, 0x1AD));
-
-            spdlog::info("MagFormatHook.CallEffectA instalado (func=0x{:X})", static_cast<unsigned>(func));
         }
     };
 
@@ -102,11 +96,9 @@ private:
         inline static std::uintptr_t func = 0;
 
         static const char* thunk(EffectStruct* arg, char* type, char* unused, char* edid) {
-            spdlog::info("MagFormatHook.CallActiveEffect::thunk chamado");
             using Fn = const char* (*)(EffectStruct*, char*, char*, char*);
 
             if (!arg) {
-                spdlog::warn("MagFormatHook.CallActiveEffect: arg == nullptr (CTD vindo)");
                 auto orig = reinterpret_cast<Fn>(func);
                 return orig ? orig(arg, type, unused, edid) : nullptr;
             }
@@ -127,9 +119,8 @@ private:
             std::string full = result;
             std::string inside = full.substr(ps.pSize, fSize - ps.pSize - ps.sSize);
 
-            std::string newFull = RDDM::OnEffectFormatted(eff, std::move(full), inside, ps.p, ps.s);
-
-            if (newFull != result) {
+            if (std::string newFull = RDDM::OnEffectFormatted(eff, std::move(full), inside, ps.p, ps.s);
+                newFull != result) {
                 arg->buffer = newFull.c_str();
                 result = arg->buffer.c_str();
             }
@@ -140,8 +131,6 @@ private:
         static void Install() {
             Hook::stl::write_call<CallActiveEffect>(REL::VariantID(33326, 34105, 0x543320),
                                                     REL::VariantOffset(0x1AD, 0x2B2, 0x1AD));
-
-            spdlog::info("MagFormatHook.CallActiveEffect instalado (func=0x{:X})", static_cast<unsigned>(func));
         }
     };
 
@@ -149,11 +138,9 @@ private:
         inline static std::uintptr_t func = 0;
 
         static const char* thunk(EffectStruct* arg, char* type, char* unused, char* edid) {
-            spdlog::info("MagFormatHook.CallEffectB::thunk chamado");
             using Fn = const char* (*)(EffectStruct*, char*, char*, char*);
 
             if (!arg) {
-                spdlog::warn("MagFormatHook.CallEffectB: arg == nullptr (CTD vindo)");
                 auto orig = reinterpret_cast<Fn>(func);
                 return orig ? orig(arg, type, unused, edid) : nullptr;
             }
@@ -167,18 +154,14 @@ private:
                 return result;
             }
 
-            spdlog::info("MagFormatHook.CallEffectB result after orig: '{}'", result);
-
             const std::size_t fSize = std::strlen(result);
             std::string full = result;
             std::string inside = full.substr(ps.pSize, fSize - ps.pSize - ps.sSize);
-            spdlog::info("MagFormatHook.CallEffectB full='{}' inside='{}'", full, inside);
 
             if (std::string newFull = RDDM::OnEffectFormatted(arg->effect.common, std::move(full), inside, ps.p, ps.s);
                 newFull != result) {
                 arg->buffer = newFull.c_str();
                 result = arg->buffer.c_str();
-                spdlog::info("MagFormatHook.CallEffectB newFull='{}'", result);
             }
 
             return result;
@@ -187,8 +170,6 @@ private:
         static void Install() {
             Hook::stl::write_call<CallEffectB>(REL::VariantID(51024, 51902, 0x8C0D60),
                                                REL::VariantOffset(0x1AD, 0x2B2, 0x1AD));
-
-            spdlog::info("MagFormatHook.CallEffectB instalado (func=0x{:X})", static_cast<unsigned>(func));
         }
     };
 

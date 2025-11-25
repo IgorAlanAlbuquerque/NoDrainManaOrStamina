@@ -57,7 +57,6 @@ namespace RDDM {
             std::scoped_lock lock(g_magMutex);
             auto it = g_lastFormattedMag.find(mgef);
             if (it == g_lastFormattedMag.end()) {
-                spdlog::info("[MagFmt] inside='sec' mas sem mag cacheado para {:08X}", mgef->formID);
                 return full;
             }
             cachedMag = it->second;

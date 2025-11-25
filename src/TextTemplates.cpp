@@ -23,7 +23,11 @@ namespace {
     constexpr RE::FormID kWallShock = 0x000BB96F;
     constexpr RE::FormID kCloakFrost = 0x0003AEA0;
     constexpr RE::FormID kCloakShock = 0x0003AEA1;
-
+    constexpr RE::FormID kFireStormMgef = 0x0007A82A;
+    constexpr RE::FormID kBlizzardMgef = 0x000B79FE;
+    constexpr RE::FormID kFreeze = 0x0402732E;
+    constexpr RE::FormID kUnboundedStormsMgef = 0xFE009807;
+    constexpr RE::FormID kUnboundedFreezingMgef = 0xFE009809;
     constexpr const char* kExtraNeedle = "extra damage";
     constexpr const char* kExtraSentence = " Targets on fire take extra damage over time.";
 
@@ -124,6 +128,46 @@ namespace {
         return std::string_view(c).contains("<dur>");
     }
 
+    inline std::string BuildDVME_Desc_Wall(const char* elem, float mult, const bool perSec, const char* secAV) {
+        std::string s;
+        s += "Creates a wall that deals <mag> ";
+        s += elem;
+        s += " damage";
+        if (perSec) s += " per second";
+        if (mult <= 1e-6f) {
+            s += " to Health";
+        } else if (std::fabs(mult - 1.0f) < 1e-3f) {
+            s += " to Health and ";
+            s += secAV;
+        } else {
+            s += " to Health and <sec> to ";
+            s += secAV;
+        }
+        s += ".";
+        return s;
+    }
+
+    inline std::string BuildDVME_Desc_Cloak(const char* elem, float mult, const char* secAV, bool frost) {
+        std::string s;
+        const float frostF = RDDM::GetScaling().frostStamina.load(std::memory_order_relaxed);
+        const float shockF = RDDM::GetScaling().shockMagicka.load(std::memory_order_relaxed);
+        mult = frost ? frostF : shockF;
+        s += "For <dur> seconds, nearby enemies take <mag> ";
+        s += elem;
+        s += " damage per second";
+        if (mult <= 1e-6f) {
+            s += " to Health";
+        } else if (std::fabs(mult - 1.0f) < 1e-3f) {
+            s += " to Health and ";
+            s += secAV;
+        } else {
+            s += " to Health and <sec> to ";
+            s += secAV;
+        }
+        s += ".";
+        return s;
+    }
+
     inline std::string BuildDVME_Desc(const RE::EffectSetting* m, float mult, bool frost) {
         const auto fid = m->GetFormID();
         const bool isWall = (fid == kWallFrost) || (fid == kWallShock);
@@ -133,47 +177,21 @@ namespace {
         const char* elem = frost ? "Frost" : "Shock";
         const char* secAV = frost ? "Stamina" : "Magicka";
 
+        if (isWall) return BuildDVME_Desc_Wall(elem, mult, perSec, secAV);
+
+        if (isCloak) return BuildDVME_Desc_Cloak(elem, mult, secAV, frost);
+
         std::string s;
-
-        if (isWall) {
-            s += "Creates a wall that deals <mag> ";
-            s += elem;
-            s += " damage";
-            if (perSec) s += " per second";
-            if (mult <= 1e-6f) {
-                s += " to Health";
-            } else if (std::fabs(mult - 1.0f) < 1e-3f) {
-                s += " to Health and ";
-                s += secAV;
-            } else {
-                s += " to Health and <sec> to ";
-                s += secAV;
-            }
-            s += ".";
-            return s;
-        }
-
-        if (isCloak) {
-            s += "For <dur> seconds, nearby enemies take <mag> ";
-            s += elem;
-            s += " damage per second";
-            if (mult <= 1e-6f) {
-                s += " to Health";
-            } else if (std::fabs(mult - 1.0f) < 1e-3f) {
-                s += " to Health and ";
-                s += secAV;
-            } else {
-                s += " to Health and <sec> to ";
-                s += secAV;
-            }
-            s += ".";
-            return s;
-        }
-
         s += "Deals <mag> ";
         s += elem;
         s += " damage";
         if (perSec) s += " per second";
+
+        if (m->GetFormID() == kBlizzardMgef) {
+            const float frostF = RDDM::GetScaling().frostStamina.load(std::memory_order_relaxed);
+            const float shockF = RDDM::GetScaling().shockMagicka.load(std::memory_order_relaxed);
+            mult = frost ? frostF : shockF;
+        }
 
         if (mult <= 1e-6f) {
             s += " to Health";
@@ -189,8 +207,54 @@ namespace {
 
         if (ShouldPrintDurationClause(m)) s += " for <dur> seconds";
 
+        if (fid == kFreeze) {
+            s += " and slows the target for <15> seconds";
+        }
+
         s += ".";
         return s;
+    }
+
+    inline void ApplyUnboundedStormsDesc(RE::EffectSetting* m, float shockMult) {
+        if (!m) {
+            return;
+        }
+
+        std::string s = "Targets in melee range take <40> points of shock damage per second to Health";
+
+        if (shockMult <= 1e-6f) {
+            s += ". Random lightning strikes deal an additional <30> damage.";
+        } else if (std::fabs(shockMult - 1.0f) < 1e-3f) {
+            s += ", and half that to Magicka. Random lightning strikes deal an additional <30> damage.";
+        } else {
+            s += " and <sec> to Magicka. Random lightning strikes deal an additional <30> damage.";
+        }
+
+        if (!SameDesc(m, s)) {
+            SetDesc(m, s);
+        }
+    }
+
+    inline void ApplyUnboundedFreezingDesc(RE::EffectSetting* m, float frostMult) {
+        if (!m) {
+            return;
+        }
+
+        std::string s =
+            "A freezing wind envelops the caster, knocking down nearby enemies and freezing them for <50> points of "
+            "damage per second to Health";
+
+        if (frostMult <= 1e-6f) {
+            s += ".";
+        } else if (std::fabs(frostMult - 1.0f) < 1e-3f) {
+            s += " and Stamina.";
+        } else {
+            s += " and <sec> to Stamina.";
+        }
+
+        if (!SameDesc(m, s)) {
+            SetDesc(m, s);
+        }
     }
 
     inline bool ci_contains(std::string_view hay, std::string_view needle) {
@@ -272,6 +336,9 @@ namespace {
     }
 
     inline void ApplyFireDescOne(RE::EffectSetting* m, float fireMult) {
+        if (m->GetFormID() == kFireStormMgef) {
+            return;
+        }
         const char* curC = m->magicItemDescription.c_str();
         std::string cur = curC ? curC : std::string{};
         TrimTrailingSpaces(cur);
@@ -289,36 +356,36 @@ namespace {
             AddExtraDamageSentence(m, cur);
         }
     }
-}
 
-inline bool IsCC_ElementalExplosion(RE::FormID id) noexcept {
-    switch (id) {
-        case 0xFE009846:
-        case 0xFE009845:
-        case 0xFE009844:
-        case 0xFE009840:
-            return true;
-        default:
-            return false;
+    inline bool IsCC_ElementalExplosion(RE::FormID id) noexcept {
+        switch (id) {
+            case 0xFE009846:
+            case 0xFE009845:
+            case 0xFE009844:
+            case 0xFE009840:
+                return true;
+            default:
+                return false;
+        }
     }
-}
 
-inline std::string BuildCC_ElementalExplosionDesc(float staminaMult, bool useHalfText) {
-    std::string s = "An elemental explosion for <mag> points of magic damage";
+    inline std::string BuildCC_ElementalExplosionDesc(float staminaMult, bool useHalfText) {
+        std::string s = "An elemental explosion for <mag> points of magic damage";
 
-    if (staminaMult <= 1e-6f) {
-        s += ". Deals shock damage on impact. Benefits from perks affecting fire, shock and frost spell damage.";
+        if (staminaMult <= 1e-6f) {
+            s += ". Deals shock damage on impact. Benefits from perks affecting fire, shock and frost spell damage.";
+            return s;
+        }
+
+        if (useHalfText) {
+            s += " and half as much damage to stamina. ";
+        } else {
+            s += " and <sec> damage to stamina. ";
+        }
+
+        s += "Deals shock damage on impact. Benefits from perks affecting fire, shock and frost spell damage.";
         return s;
     }
-
-    if (useHalfText) {
-        s += " and half as much damage to stamina. ";
-    } else {
-        s += " and <sec> damage to stamina. ";
-    }
-
-    s += "Deals shock damage on impact. Benefits from perks affecting fire, shock and frost spell damage.";
-    return s;
 }
 
 void TextDes::ApplyDVME_TextTemplates() {
@@ -331,6 +398,8 @@ void TextDes::ApplyDVME_TextTemplates() {
     for (auto* m : dh->GetFormArray<RE::EffectSetting>()) {
         if (!m) continue;
 
+        const auto fid = m->GetFormID();
+
         if (IsCC_ElementalExplosion(m->GetFormID())) {
             const float cfg = RDDM::GetScaling().frostStamina.load(std::memory_order_relaxed);
             const float fireF = RDDM::GetScaling().fireBurning.load(std::memory_order_relaxed);
@@ -341,6 +410,14 @@ void TextDes::ApplyDVME_TextTemplates() {
                 SetDesc(m, txt);
             }
             ApplyFireTaper(m, fireF);
+            continue;
+        }
+        if (fid == kUnboundedStormsMgef) {
+            ApplyUnboundedStormsDesc(m, shockF);
+            continue;
+        }
+        if (fid == kUnboundedFreezingMgef) {
+            ApplyUnboundedFreezingDesc(m, frostF);
             continue;
         }
         if (Common::IsElementFrost(m)) {

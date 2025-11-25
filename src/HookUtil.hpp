@@ -106,7 +106,7 @@ namespace Hook::stl {
                 fmt::format("Invalid target address for detour replace [{} + 0x{:X}]", a_relId.id(), a_relId.offset()));
         }
 
-        PVOID targetFunc = reinterpret_cast<PVOID>(target.address());
+        auto targetFunc = reinterpret_cast<PVOID>(target.address());
 
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
